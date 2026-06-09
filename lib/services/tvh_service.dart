@@ -14,6 +14,8 @@ class TVHService {
   String _baseUrl = '';
   String _username = '';
   String _password = '';
+  Map<String, EpgEvent?> _epgCache = {};
+  DateTime? _epgCacheTime;
 
   Future<void> loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
@@ -25,18 +27,15 @@ class TVHService {
   Map<String, String> get _headers {
     if (_username.isNotEmpty) {
       final credentials = base64Encode(utf8.encode('$_username:$_password'));
-      return {
-        'Authorization': 'Basic $credentials',
-        'Content-Type': 'application/json',
-      };
+      return {'Authorization': 'Basic $credentials'};
     }
-    return {'Content-Type': 'application/json'};
+    return {};
   }
 
   Future<http.Response> _get(String path) async {
     await loadSettings();
     final uri = Uri.parse('$_baseUrl$path');
-    return http.get(uri, headers: _headers).timeout(const Duration(seconds: 15));
+    return http.get(uri, headers: _headers).timeout(const Duration(seconds: 30));
   }
 
   Future<bool> testConnection() async {
@@ -49,67 +48,63 @@ class TVHService {
   }
 
   Future<List<Channel>> getChannels({String? tagUuid}) async {
-    // TVHeadend API: 태그 필터링은 filter 파라미터 사용
-    String url = '/api/channel/grid?limit=2000&offset=0&sort=number&dir=ASC';
-    if (tagUuid != null && tagUuid.isNotEmpty) {
-      // TVHeadend uses filter with tags field
-      final filter = jsonEncode([{"field": "tags", "type": "string", "value": tagUuid}]);
-      url += '&filter=${Uri.encodeComponent(filter)}';
-    }
+    String url = '/api/channel/grid?limit=2000&offset=0';
+    if (tagUuid != null && tagUuid.isNotEmpty) url += '&tag=$tagUuid';
     final resp = await _get(url);
     if (resp.statusCode != 200) throw Exception('채널 로드 실패: ${resp.statusCode}');
     final data = jsonDecode(resp.body);
     final entries = data['entries'] as List? ?? [];
-    return entries.map((e) => Channel.fromJson(e)).toList()
-      ..sort((a, b) => (a.number ?? 9999).compareTo(b.number ?? 9999));
+    List<Channel> channels = entries.map((e) => Channel.fromJson(e)).toList();
+    if (tagUuid != null && tagUuid.isNotEmpty) {
+      channels = channels.where((ch) => ch.tags.contains(tagUuid)).toList();
+    }
+    channels.sort((a, b) => (a.numberSort ?? 9999).compareTo(b.numberSort ?? 9999));
+    return channels;
   }
 
   Future<List<ChannelTag>> getChannelTags() async {
     try {
-      final resp = await _get('/api/channeltag/grid?limit=500&offset=0');
+      final resp = await _get('/api/channeltag/grid?limit=500');
       if (resp.statusCode != 200) return [];
       final data = jsonDecode(resp.body);
       final entries = data['entries'] as List? ?? [];
-      final tags = entries.map((e) => ChannelTag.fromJson(e)).toList();
-      tags.sort((a, b) => (a.index ?? 9999).compareTo(b.index ?? 9999));
-      return tags;
-    } catch (_) {
-      return [];
+      return entries.map((e) => ChannelTag.fromJson(e)).toList()
+        ..sort((a, b) => (a.index ?? 9999).compareTo(b.index ?? 9999));
+    } catch (_) { return []; }
+  }
+
+  Future<Map<String, EpgEvent?>> getAllNowPlaying() async {
+    if (_epgCacheTime != null &&
+        DateTime.now().difference(_epgCacheTime!).inMinutes < 5 &&
+        _epgCache.isNotEmpty) {
+      return _epgCache;
     }
+    try {
+      final resp = await _get('/api/epg/events/grid?limit=500');
+      if (resp.statusCode != 200) return {};
+      final data = jsonDecode(resp.body);
+      final entries = data['entries'] as List? ?? [];
+      final events = entries.map((e) => EpgEvent.fromJson(e)).toList();
+      final Map<String, EpgEvent?> result = {};
+      for (final event in events) {
+        if (event.channelUuid == null) continue;
+        if (event.isNow) result[event.channelUuid!] = event;
+      }
+      _epgCache = result;
+      _epgCacheTime = DateTime.now();
+      return result;
+    } catch (_) { return {}; }
   }
 
   Future<List<EpgEvent>> getEpg(String channelUuid, {int hours = 12}) async {
     try {
-      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      final end = now + (hours * 3600);
-      // TVHeadend EPG API - channel UUID 정확히 전달
-      final resp = await _get(
-        '/api/epg/events/grid?limit=50&channel=$channelUuid&start=$now&stop=$end',
-      );
+      final resp = await _get('/api/epg/events/grid?limit=500');
       if (resp.statusCode != 200) return [];
       final data = jsonDecode(resp.body);
       final entries = data['entries'] as List? ?? [];
-      return entries.map((e) => EpgEvent.fromJson(e)).toList();
-    } catch (_) {
-      return [];
-    }
-  }
-
-  // 현재 방영중인 EPG만 가져오기
-  Future<EpgEvent?> getNowPlaying(String channelUuid) async {
-    try {
-      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      final resp = await _get(
-        '/api/epg/events/grid?limit=5&channel=$channelUuid&start=${now - 7200}&stop=${now + 60}',
-      );
-      if (resp.statusCode != 200) return null;
-      final data = jsonDecode(resp.body);
-      final entries = data['entries'] as List? ?? [];
       final events = entries.map((e) => EpgEvent.fromJson(e)).toList();
-      return events.where((e) => e.isNow).firstOrNull;
-    } catch (_) {
-      return null;
-    }
+      return events.where((e) => e.channelUuid == channelUuid).toList();
+    } catch (_) { return []; }
   }
 
   Future<List<StreamProfile>> getProfiles() async {
@@ -120,9 +115,7 @@ class TVHService {
       final entries = data['entries'] as List? ?? [];
       if (entries.isEmpty) return _defaultProfiles();
       return entries.map((e) => StreamProfile.fromJson(e)).toList();
-    } catch (_) {
-      return _defaultProfiles();
-    }
+    } catch (_) { return _defaultProfiles(); }
   }
 
   List<StreamProfile> _defaultProfiles() => [
@@ -134,8 +127,7 @@ class TVHService {
     final profileParam = profileUuid.isNotEmpty ? '?profile=$profileUuid' : '';
     if (_username.isNotEmpty) {
       final uri = Uri.parse(_baseUrl);
-      return '${uri.scheme}://$_username:$_password@${uri.host}:${uri.port}'
-             '/stream/channel/$channelUuid$profileParam';
+      return '${uri.scheme}://$_username:$_password@${uri.host}:${uri.port}/stream/channel/$channelUuid$profileParam';
     }
     return '$_baseUrl/stream/channel/$channelUuid$profileParam';
   }
