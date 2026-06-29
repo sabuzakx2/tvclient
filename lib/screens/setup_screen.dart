@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/tvh_service.dart';
 import 'home_screen.dart';
+import '../widgets/tv_url_keyboard.dart';
 
 class SetupScreen extends StatefulWidget {
   final bool isEdit;
@@ -41,6 +42,22 @@ class _SetupScreenState extends State<SetupScreen> {
     _urlCtrl.text = prefs.getString('server_url') ?? '';
     _userCtrl.text = prefs.getString('username') ?? '';
     _passCtrl.text = prefs.getString('password') ?? '';
+  }
+
+  Future<void> _editUrl() async {
+    final result = await showTvUrlKeyboard(
+      context,
+      initialValue: _urlCtrl.text,
+    );
+
+    if (result != null) {
+      setState(() {
+        _urlCtrl.text = result;
+        _error = null;
+      });
+    }
+
+    _urlFocus.requestFocus();
   }
 
   KeyEventResult _moveFocus(
@@ -148,15 +165,65 @@ class _SetupScreenState extends State<SetupScreen> {
                         event,
                         next: _userFocus,
                       ),
-                      child: _buildField(
-                        focusNode: _urlFocus,
-                        controller: _urlCtrl,
-                        label: '서버 URL',
-                        hint: 'https://192.168.1.100:9981',
-                        icon: Icons.dns,
-                        keyboardType: TextInputType.url,
-                        textInputAction: TextInputAction.next,
-                        onSubmitted: (_) => _userFocus.requestFocus(),
+                      child: SizedBox(
+                        width: double.infinity,
+                        height: 64,
+                        child: OutlinedButton(
+                          focusNode: _urlFocus,
+                          onPressed: _editUrl,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            backgroundColor: const Color(0xFF1E1E2E),
+                            side: const BorderSide(
+                              color: Color(0xFF42A5F5),
+                              width: 2,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(horizontal: 18),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.dns, color: Colors.grey),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      '서버 URL',
+                                      style: TextStyle(
+                                        color: Colors.grey,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      _urlCtrl.text.isEmpty
+                                          ? '확인 버튼을 눌러 주소 입력'
+                                          : _urlCtrl.text,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: _urlCtrl.text.isEmpty
+                                            ? Colors.grey
+                                            : Colors.white,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(
+                                Icons.keyboard,
+                                color: Color(0xFF42A5F5),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
 
