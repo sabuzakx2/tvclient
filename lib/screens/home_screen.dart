@@ -58,38 +58,74 @@ class _HomeScreenState extends State<HomeScreen> {
     _filterChannels();
   }
 
-  Future<void> _load() async {
-    setState(() { _loading = true; _error = null; });
-    try {
-      await TVHService.instance.loadSettings();
-      final prefs = await SharedPreferences.getInstance();
-      _selectedProfileUuid = prefs.getString('profile_uuid') ?? '';
-      _selectedProfileName = prefs.getString('profile_name') ?? 'pass';
-      _selectedTagUuid = prefs.getString('tag_uuid');
-      _selectedTagName = prefs.getString('tag_name') ?? '전체';
+Future<void> _load() async {
+  setState(() {
+    _loading = true;
+    _error = null;
+  });
 
-      final channels = await TVHService.instance.getChannels(tagUuid: _selectedTagUuid);
-      final tags = await TVHService.instance.getChannelTags();
-      final profiles = await TVHService.instance.getProfiles();
-      final epgMap = await TVHService.instance.getAllNowPlaying();
+  try {
+    await TVHService.instance.loadSettings();
 
-      if (!mounted) return;
-      setState(() {
-        _channels = channels;
-        _tags = tags;
-        _profiles = profiles;
-        _nowPlaying = Map<String, EpgEvent?>.from(epgMap);
-        _loading = false;
-        if (_selectedProfileUuid.isEmpty && profiles.isNotEmpty) {
-          _selectedProfileUuid = profiles.first.uuid;
-          _selectedProfileName = profiles.first.name;
-        }
-      });
-      _filterChannels();
-    } catch (e) {
-      if (mounted) setState(() { _loading = false; _error = e.toString(); });
+    final prefs = await SharedPreferences.getInstance();
+
+    final savedProfileUuid = prefs.getString('profile_uuid') ?? '';
+    final savedProfileName = prefs.getString('profile_name') ?? '';
+
+    _selectedTagUuid = prefs.getString('tag_uuid');
+    _selectedTagName = prefs.getString('tag_name') ?? '전체';
+
+    final channels = await TVHService.instance.getChannels(
+      tagUuid: _selectedTagUuid,
+    );
+    final tags = await TVHService.instance.getChannelTags();
+    final profiles = await TVHService.instance.getProfiles();
+    final epgMap = await TVHService.instance.getAllNowPlaying();
+
+    StreamProfile? selectedProfile;
+
+    for (final profile in profiles) {
+      if (profile.uuid == savedProfileUuid) {
+        selectedProfile = profile;
+        break;
+      }
     }
+
+    // 재설치 전 UUID가 남아 있거나, 첫 실행인 경우
+    // 새 TVHeadend 서버의 첫 번째 유효 프로파일로 자동 복구
+    selectedProfile ??= profiles.isNotEmpty ? profiles.first : null;
+
+    if (selectedProfile != null) {
+      await prefs.setString('profile_uuid', selectedProfile.uuid);
+      await prefs.setString('profile_name', selectedProfile.name);
+    } else {
+      await prefs.remove('profile_uuid');
+      await prefs.remove('profile_name');
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _channels = channels;
+      _tags = tags;
+      _profiles = profiles;
+      _nowPlaying = Map.from(epgMap);
+      _loading = false;
+
+      _selectedProfileUuid = selectedProfile?.uuid ?? '';
+      _selectedProfileName = selectedProfile?.name ?? 'pass';
+    });
+
+    _filterChannels();
+  } catch (e) {
+    if (!mounted) return;
+
+    setState(() {
+      _loading = false;
+      _error = e.toString();
+    });
   }
+}
 
   void _filterChannels() {
     final q = _searchCtrl.text.toLowerCase();
