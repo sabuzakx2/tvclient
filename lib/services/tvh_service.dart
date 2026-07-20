@@ -107,16 +107,21 @@ class TVHService {
     } catch (_) { return []; }
   }
 
-  Future<List<StreamProfile>> getProfiles() async {
-    try {
-      final resp = await _get('/api/profile/list');
-      if (resp.statusCode != 200) return _defaultProfiles();
-      final data = jsonDecode(resp.body);
-      final entries = data['entries'] as List? ?? [];
-      if (entries.isEmpty) return _defaultProfiles();
-      return entries.map((e) => StreamProfile.fromJson(e)).toList();
-    } catch (_) { return _defaultProfiles(); }
+Future<List<StreamProfile>> getProfiles() async {
+  try {
+    final resp = await _get('/api/profile/list');
+    if (resp.statusCode != 200) return _defaultProfiles();
+    final data = jsonDecode(resp.body);
+    final entries = data['entries'] as List? ?? [];
+    if (entries.isEmpty) return _defaultProfiles();
+    return entries.map((e) {
+      final name = e['val'] ?? '';
+      return StreamProfile(uuid: name, name: name);
+    }).toList();
+  } catch (_) {
+    return _defaultProfiles();
   }
+}
 
   List<StreamProfile> _defaultProfiles() => [
     StreamProfile(uuid: 'pass', name: 'pass (원본)'),
